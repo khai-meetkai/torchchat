@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
 from build.utils import device_sync
+import datetime
 
 from generate import Generator, GeneratorArgs
+from functionary.prompt_template import get_prompt_template_by_version
 
 """Dataclasses defined around the objects used the OpenAI API Chat specification.
 
@@ -206,6 +208,23 @@ class CompletionResponseChunk:
     usage: Optional[UsageStats] = None
 
 
+def get_prompt_template_from_model(model):
+    if "v3.2" in model:
+        prompt_template = get_prompt_template_by_version("v3.llama3")
+    else:
+        prompt_template = get_prompt_template_by_version("v3-llama3.1")
+    return prompt_template
+
+
+def get_prompt(request):
+    messages = request["messages"]
+    tools = request["tools"]
+    model = request["model"]
+    prompt_template = get_prompt_template_from_model(model)
+    prompt = prompt_template.get_prompt_from_messages(messages + [{"role": "assistant"}], tools)
+    return prompt
+
+
 class OpenAiApiGenerator(Generator):
     """A wrapper over the Generator class to interface with the OpenAI API.
 
@@ -234,7 +253,7 @@ class OpenAiApiGenerator(Generator):
             self.builder_args.device + type(self.builder_args.precision).__name__
         )
 
-    def chunked_completion(self, completion_request: CompletionRequest):
+    def chunked_completion(self, completion_request: Dict):
         """Handle a chat completion request and yield a chunked response.
 
         ** Warning ** : Not all arguments of the CompletionRequest are consumed as the server isn't completely implemented.
@@ -263,15 +282,23 @@ class OpenAiApiGenerator(Generator):
 
         idx = 0
         buffer = []
+        full_prompt = get_prompt(completion_request)
         encoded = self.encode_tokens(
-            completion_request.messages[-1].get("content"),
+            full_prompt,
             bos=True,
             device=self.builder_args.device,
         )
+        
+        temperature = completion_request.get("temperature", 0.0001)
+        if temperature == 0:
+            temperature = 0.0001
+            
         generator_args = GeneratorArgs(
-            completion_request.messages[-1].get("content"),
+            full_prompt,
             encoded_prompt=encoded,
             chat_mode=False,
+            temperature=temperature,
+            max_new_tokens=completion_request.get("max_tokens", 512)
         )
 
         def callback(x, *, done_generating=False):
@@ -282,6 +309,7 @@ class OpenAiApiGenerator(Generator):
             )
 
         # Process each token, metrics tuple yielded by Generator.generate.
+        token_ids = []
         for y, _ in self.generate(
             self.model,
             encoded,
@@ -292,73 +320,42 @@ class OpenAiApiGenerator(Generator):
             callback=callback,
             temperature=generator_args.temperature,
             top_k=generator_args.top_k,
-            sequential_prefill=generator_args.sequential_prefill,
-            start_pos=self.start_pos,
+            sequential_prefill=True,
+            start_pos=0,
             max_seq_length=self.max_seq_length,
         ):
             if y is None:
                 continue
-
-            # Decode the torch.Tensor token to a string and append to the buffer. Separate the sequences with a period token.
-            content = "".join(
-                self.tokenizer.decode([self.tokenizer.encode(".")[0]] + y.tolist())[1:]
-            )
-
-            # Package the sequence into a CompletionChunkResponse and yield it.
-            chunk_delta = ChunkDelta(
-                role="assistant",
-                content=content,
-                tool_calls=None,
-            )
-            choice_chunk = CompletionChoiceChunk(
-                delta=chunk_delta,
-                index=idx,
-            )
-            chunk_response = CompletionResponseChunk(
-                id=str(id),
-                choices=[choice_chunk],
-                created=int(time.time()),
-                model=completion_request.model,
-                system_fingerprint=self.system_fingerprint,
-            )
-            yield chunk_response
-            self.start_pos += y.size(0)
-            idx += 1
-
-        # Yield an ending chunk indicating the generation has completed.
-        end_chunk = CompletionChoiceChunk(
-            ChunkDelta(None, None, None), idx, finish_reason="stop"
-        )
-
-        yield CompletionResponseChunk(
-            id=str(id),
-            choices=[end_chunk],
-            created=int(time.time()),
-            model=completion_request.model,
-            system_fingerprint=self.system_fingerprint,
-        )
-
-    def sync_completion(self, request: CompletionRequest):
+            
+            token_id = y.tolist()
+            token_ids = token_ids + token_id
+        return token_ids
+        
+            
+    def sync_completion(self, request: Dict):
         """Handle a chat completion request and yield a single, non-chunked response"""
-        output = ""
-        for chunk in self.chunked_completion(request):
-            if not chunk.choices[0].finish_reason:
-                output += chunk.choices[0].delta.content
-
-        message = AssistantMessage(content=output)
-        return CompletionResponse(
-            id=str(uuid.uuid4()),
-            choices=[
-                CompletionChoice(
-                    finish_reason="stop",
-                    index=0,
-                    message=message,
-                )
-            ],
-            created=int(time.time()),
-            model=request.model,
-            system_fingerprint=self.system_fingerprint,
-        )
+        token_ids = self.chunked_completion(request)
+        output = self.tokenizer.decode(token_ids)
+        print("output: ", output)
+        prompt_template = get_prompt_template_from_model(request["model"])
+        assistant_message = prompt_template.parse_assistant_response(output)
+        choice_data = {
+            "index": 0,
+            "message": assistant_message,
+            "finish_reason": "stop"
+        }
+        
+        return {
+            "id": "123",
+            "created": str(datetime.datetime.now()),
+            "model": request["model"],
+            "choices": [choice_data],
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0
+            }
+        }
 
     def _callback(self, x, *, buffer, done_generating):
         period_id = self.tokenizer.encode(".")[0]

@@ -35,7 +35,7 @@ def create_app(args):
             return [_del_none(v) for v in d if v]
         return d
 
-    @app.route(f"/{OPENAI_API_VERSION}/chat", methods=["POST"])
+    @app.route(f"/{OPENAI_API_VERSION}/chat/completions", methods=["POST"])
     def chat_endpoint():
         """
         Endpoint for the Chat API. This endpoint is used to generate a response to a user prompt.
@@ -52,10 +52,10 @@ def create_app(args):
         print(" === Completion Request ===")
 
         # Parse the request in to a CompletionRequest object
-        data = request.get_json()
-        req = CompletionRequest(**data)
+        request_data = request.get_json()
+        #req = CompletionRequest(**data)
 
-        if data.get("stream") == "true":
+        if request_data.get("stream") == "true":
 
             def chunk_processor(chunked_completion_generator):
                 """Inline function for postprocessing CompletionResponseChunk objects.
@@ -73,9 +73,9 @@ def create_app(args):
                 mimetype="text/event-stream",
             )
         else:
-            response = gen.sync_completion(req)
+            response = gen.sync_completion(request_data)
 
-            return json.dumps(_del_none(asdict(response)))
+            return json.dumps(response, ensure_ascii=False) #json.dumps(_del_none(asdict(response)))
 
     @app.route(f"/{OPENAI_API_VERSION}/models", methods=["GET"])
     def models_endpoint():
@@ -92,12 +92,16 @@ def create_app(args):
 
 
 def initialize_generator(args) -> OpenAiApiGenerator:
+    print("args: ", args)
     builder_args = BuilderArgs.from_args(args)
     speculative_builder_args = BuilderArgs.from_speculative_args(args)
     tokenizer_args = TokenizerArgs.from_args(args)
     generator_args = GeneratorArgs.from_args(args)
     generator_args.chat_mode = False
 
+    print("builder_args: ", builder_args)
+    print("tokenizer_args: ", tokenizer_args)
+    print("generator_args: ", generator_args)
     return OpenAiApiGenerator(
         builder_args=builder_args,
         speculative_builder_args=speculative_builder_args,

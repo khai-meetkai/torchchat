@@ -62,6 +62,14 @@ class ChatFormat:
         return tokens
 
 
+def read_prompt_arg(prompt):
+    if prompt.startswith("file:"):
+        path = prompt[len("files"): ].strip()
+        with open(path, "r") as f:
+            return f.read()
+    return prompt
+
+
 @dataclass
 class GeneratorArgs:
     prompt: str = "torchchat is pronounced torch-chat and is so cool because"
@@ -110,7 +118,7 @@ class GeneratorArgs:
         )
 
         return cls(
-            prompt=getattr(args, "prompt", ""),
+            prompt=read_prompt_arg(getattr(args, "prompt", "")),
             encoded_prompt=None,
             chat_mode=args.chat,
             gui_mode=args.gui,
@@ -219,8 +227,8 @@ class Generator:
         else:
             self.draft_model = None
 
-        self.tokenizer_args.validate_model(self.model)
-        self.tokenizer_args.validate_model(self.draft_model, "draft model")
+        #self.tokenizer_args.validate_model(self.model)
+        #self.tokenizer_args.validate_model(self.draft_model, "draft model")
         generator_args.validate_build(self.builder_args)
         generator_args.validate_build(self.speculative_builder_args, "draft model")
 
@@ -335,7 +343,7 @@ class Generator:
                 )
                 input_pos += 1
                 new_tokens.append(next_token.clone())
-                callback(new_tokens[-1], done_generating=_i == num_new_tokens - 2)
+                # callback(new_tokens[-1], done_generating=_i == num_new_tokens - 2)
                 if need_probs or next_prob is None:
                     yield out_token, None
                 else:
@@ -347,6 +355,7 @@ class Generator:
                 if next_token.item() == eos_token_id or (
                     eot_id is not None and next_token.item() == eot_id
                 ):
+                    print("ATTENTION, encounter eos: ", eot_id)
                     encountered_eos = True
                     final_token, next_prob = self.decode_one_token(
                         model, cur_token, input_pos, need_probs, **sampling_kwargs
@@ -489,6 +498,7 @@ class Generator:
         )
 
         prefill_t0 = time.perf_counter()
+        # print(f"sequential_prefill={sequential_prefill};")
         next_token = self.prefill(
             model,
             prompt.view(1, -1),
@@ -508,7 +518,7 @@ class Generator:
         yield None, {"time_to_first_token": time_to_first_token}
         seq[T] = next_token
         # max_new_tokens <= 2 means we are effectively not calling decode_n_tokens().
-        callback(next_token.clone().view(-1), done_generating=max_new_tokens <= 2)
+        # callback(next_token.clone().view(-1), done_generating=max_new_tokens <= 2)
 
         input_pos = torch.tensor([start_pos + T], device=device, dtype=torch.int)
         accept_counts = [0] * (
@@ -541,6 +551,13 @@ class Generator:
                 next_token = next_tokens[-1]
         else:
             generated_tokens = []
+            eos_token_id = self.tokenizer.eos_token_id if self.tokenizer_args.is_hf else self.tokenizer.eos_id()
+            eot_id = None
+            if self.is_llama3_model:
+                if self.tokenizer_args.is_hf:
+                    eot_id = self.tokenizer.encode("<|eot_id|>", add_special_tokens=False)[0]
+                else:
+                    eot_id = self.tokenizer.special_tokens["<|eot_id|>"]
             for generated_token, _ in self.decode_n_tokens(
                 model,
                 next_token,
@@ -548,12 +565,8 @@ class Generator:
                 max_new_tokens - 1,
                 callback=callback,
                 need_probs=False,
-                eos_token_id=self.tokenizer.eos_id() if self.tokenizer else 2,
-                eot_id=(
-                    self.tokenizer.special_tokens["<|eot_id|>"]
-                    if self.is_llama3_model
-                    else None
-                ),
+                eos_token_id=eos_token_id,
+                eot_id=eot_id,
                 **sampling_kwargs,
             ):
                 generated_tokens.append(generated_token)
@@ -570,6 +583,10 @@ class Generator:
         yield None, generate_stats
 
     def encode_tokens(self, string, bos=True, device="cpu"):
+        if self.tokenizer_args.is_hf:
+            encoded = self.tokenizer.encode(string)
+            return torch.tensor(encoded, dtype=torch.int, device=device)
+        
         tokens = self.tokenizer.encode(string)
         if bos:
             tokens = [self.tokenizer.bos_id()] + tokens
@@ -747,9 +764,11 @@ class Generator:
                 import contextlib
 
                 prof = contextlib.nullcontext()
+                print("run 1")
             else:
                 torch.profiler._utils._init_for_cuda_graphs()
                 prof = torch.profiler.profile()
+                print("run 2")
             t0 = time.perf_counter()
             num_tokens_generated = 0
             with prof:
@@ -841,6 +860,17 @@ def main(args):
     speculative_builder_args = BuilderArgs.from_speculative_args(args)
     tokenizer_args = TokenizerArgs.from_args(args)
     generator_args = GeneratorArgs.from_args(args)
+    
+    print("--------")
+    print(builder_args)
+    print(speculative_builder_args)
+    print(tokenizer_args)
+    print(generator_args)
+    
+    print("profile: ", args.profile)
+    print("quantize: ", args.quantize)
+    print("draft_quantize: ", args.draft_quantize)
+    
     gen = Generator(
         builder_args,
         speculative_builder_args,

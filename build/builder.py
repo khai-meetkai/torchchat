@@ -25,6 +25,7 @@ from utils.measure_time import measure_time
 from build.model import Transformer
 from build.utils import device_sync, is_cpu_device, is_cuda_or_cpu_device, name_to_dtype
 from distributed import launch_distributed
+from enum import Enum
 
 
 @dataclass
@@ -181,8 +182,17 @@ class TokenizerArgs:
     is_sentencepiece: bool = False
     is_tiktoken: bool = False
     t: Optional[Any] = None
+    is_hf: bool = False
 
     def __post_init__(self):
+        tokenizer_path = str(self.tokenizer_path)
+        if tokenizer_path.startswith("hf:"):
+            tokenizer_path = tokenizer_path[len("hf:"): ].strip()
+            from transformers import AutoTokenizer
+            self.t = AutoTokenizer.from_pretrained(tokenizer_path)
+            self.is_hf = True
+            return 
+        
         try:
             from tokenizer.tiktoken import Tokenizer as TiktokenTokenizer
 
@@ -252,8 +262,8 @@ class TokenizerArgs:
         else:
             raise RuntimeError("cannot find tokenizer model")
 
-        if not tokenizer_path.is_file():
-            raise RuntimeError(f"did not find tokenizer at {tokenizer_path}")
+        #if not tokenizer_path.is_file():
+        #    raise RuntimeError(f"did not find tokenizer at {tokenizer_path}")
 
         return cls(
             tokenizer_path=tokenizer_path,
