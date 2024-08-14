@@ -1,3 +1,23 @@
+# OpenAI Compatiable Service
+The purpose of this repository is to create an OpenAI Compatible service for .pte models from functionary.
+To start the service, first we need to clone functionary: 
+```sh
+git clone https://github.com/MeetKai/functionary.git
+```
+Then we need to install additional requirements:
+```sh
+pip install jsonref~=1.1.0
+pip install pydantic==2.8.2
+```
+Export PYTHONPATH:
+```sh
+export PYTHONPATH=PATH_TO_CLONED_FUNCTIONARY_FOLDER
+```
+Start the service:
+```sh
+python torchchat.py server llama3.1 --pte-path pte_files/functionary_khai.pte --device cpu --tokenizer-path hf:meetkai/functionary-small-v3.2
+```
+
 # Chat with LLMs Everywhere
 
 torchchat is a small codebase showcasing the ability to run large language models (LLMs) seamlessly. With torchchat, you can run LLMs using Python, within your own (C/C++) application (desktop or server) and on iOS and Android.
