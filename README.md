@@ -15,7 +15,7 @@ export PYTHONPATH=PATH_TO_CLONED_FUNCTIONARY_FOLDER
 ```
 Start the service:
 ```sh
-python torchchat.py server llama3.1 --pte-path pte_files/functionary_khai.pte --device cpu --tokenizer-path hf:meetkai/functionary-small-v3.2
+python torchchat.py server llama3.1 --pte-path pte_files/functionary_khai.pte --device cpu
 ```
 
 # Chat with LLMs Everywhere
