@@ -289,6 +289,8 @@ class OpenAiApiGenerator(Generator):
             device=self.builder_args.device,
         )
         
+        # print("encoded: ", encoded)
+        
         temperature = completion_request.get("temperature", 0.0001)
         if temperature == 0:
             temperature = 0.0001

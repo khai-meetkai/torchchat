@@ -587,7 +587,8 @@ class Generator:
             encoded = self.tokenizer.encode(string)
             return torch.tensor(encoded, dtype=torch.int, device=device)
         
-        tokens = self.tokenizer.encode(string)
+        # must set allowed_special="all" to make sure that special tokens won't be splitted into small tokens
+        tokens = self.tokenizer.encode(string, allowed_special="all")
         if bos:
             tokens = [self.tokenizer.bos_id()] + tokens
         return torch.tensor(tokens, dtype=torch.int, device=device)
